@@ -28,3 +28,6 @@ Every team creates a repository for their subsystem with the following structure
 main        → always stable
 feature/*  → active work
 ```
+
+## Docs
+Please keep your READMEs updated with dependencies and how your subsystem exposes itself for integration (API design)!
