@@ -11,3 +11,20 @@ Supply Chain Management Software
 	- It is fully functional
 	- It integrates successfully with at least two other subsystems
 - Subsystems assigned at random
+
+## Repo Structure
+Every team creates a repository for their subsystem with the following structure:
+```
+/src
+  /controllers
+  /services
+  /models
+/tests
+/docs
+```
+
+## Branching Strategy
+```
+main        → always stable
+feature/*  → active work
+```
