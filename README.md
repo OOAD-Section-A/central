@@ -22,6 +22,7 @@ Every team creates a repository for their subsystem with the following structure
 /tests
 /docs
 ```
+It would also be useful to set a ruleset to protect your main branch, because all members of the organisation have push access by default. Reference for this: https://github.com/orgs/community/discussions/172064
 
 ## Branching Strategy
 ```
