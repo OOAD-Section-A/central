@@ -70,7 +70,7 @@ All subsystems adhere to the following strict integration guidelines:
 
 ## Notes on Integration of Each Subsystem
 ### Packing
-- Database integration not working as intended currently
+- Fully working
 ### Warehouse Management
 - No UI present, only simple CLI options
 - Wrapped CLI output into the main UI
