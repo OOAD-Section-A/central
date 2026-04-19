@@ -1,0 +1,8 @@
+# Copy to database.properties and fill with your local credentials.
+# Used by exception-handler/viewer jars in lib.
+
+db.url=jdbc:mysql://localhost:3306/OOAD
+db.username=root
+db.user=root
+db.password=CHANGE_ME
+db.pool.size=5

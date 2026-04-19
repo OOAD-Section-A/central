@@ -1,0 +1,1 @@
+import com.scm.packing.integration.database.DatabaseLayerFactory; public class TestProbe { public static void main(String[] args) { try { DatabaseLayerFactory.create(); } catch(Exception e) { e.printStackTrace(); } } }

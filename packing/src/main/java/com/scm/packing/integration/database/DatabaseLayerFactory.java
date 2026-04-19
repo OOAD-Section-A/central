@@ -52,7 +52,8 @@ public class DatabaseLayerFactory {
             System.out.println("[DatabaseLayerFactory] SCM database-module found — using SCMDatabaseAdapter.");
             return new SCMDatabaseAdapter();
         } catch (ClassNotFoundException | LinkageError | RuntimeException e) {
-            System.out.println("[DatabaseLayerFactory] SCM database-module NOT found on classpath.");
+            System.out.println("[DatabaseLayerFactory] SCM database-module NOT found on classpath or initialization failed.");
+            e.printStackTrace();
             System.out.println("[DatabaseLayerFactory] Falling back to FlatFileDatabaseAdapter (session-only persistence).");
             return new FlatFileDatabaseAdapter();
         }

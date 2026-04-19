@@ -114,7 +114,6 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
             public void windowClosing(WindowEvent e) {
                 model.getDatabaseLayer().clearAll();
                 dispose();
-                System.exit(0);
             }
         });
 

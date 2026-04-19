@@ -67,3 +67,10 @@ All subsystems adhere to the following strict integration guidelines:
    cd warehouse-management
    mvn exec:java -Dexec.mainClass="Main"
    ```
+
+## Notes on Integration of Each Subsystem
+### Packing
+- Database integration not working as intended currently
+### Warehouse Management
+- No UI present, only simple CLI options
+- Wrapped CLI output into the main UI

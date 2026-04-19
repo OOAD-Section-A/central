@@ -20,22 +20,18 @@
     </properties>
 
     <dependencies>
-        <!-- SCM Database Module (provided as standalone JAR in /lib) -->
+        <!-- SCM Database Module (from multi-module build) -->
         <dependency>
             <groupId>com.jackfruit.scm</groupId>
-            <artifactId>database-module-standalone</artifactId>
+            <artifactId>database-module</artifactId>
             <version>1.0.0-SNAPSHOT</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/database-module-1.0.0-SNAPSHOT-standalone.jar</systemPath>
         </dependency>
 
-        <!-- SCM Exception Handler (provided by exception subsystem team) -->
+        <!-- SCM Exception Handler - now installed in local .m2 repository -->
         <dependency>
             <groupId>com.scm</groupId>
             <artifactId>scm-exception-handler</artifactId>
             <version>3.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/scm-exception-handler-v3.jar</systemPath>
         </dependency>
 
         <!-- FlatLaf for modern Swing Look and Feel -->
