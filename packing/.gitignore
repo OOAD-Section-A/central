@@ -21,7 +21,6 @@
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
-replay_pid*
 
 # Maven
 target/
@@ -35,10 +34,27 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
-# IDEs
+# IDE specific files
 .idea/
+*.iws
 *.iml
+*.ipr
 .vscode/
+.settings/
 .classpath
 .project
-.settings/
+
+# Fallback temporary files
+*.tmp
+
+# Sensitive local configuration
+src/main/resources/database.properties
+lib/database.properties
+lib/scm-gui.properties
+
+# Local debug/output artifacts
+target/cp.txt
+
+# Keep safe templates committed
+!src/main/resources/database.properties.example
+!lib/database.properties.example
