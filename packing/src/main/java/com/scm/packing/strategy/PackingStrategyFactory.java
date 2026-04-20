@@ -31,8 +31,9 @@ public class PackingStrategyFactory {
      * Returns the best packing strategy for the given job.
      *
      * <ul>
-     *   <li>If <b>any</b> item in the job is fragile → {@link FragilePackingStrategy}</li>
-     *   <li>Otherwise → {@link StandardPackingStrategy}</li>
+        *   <li>Only fragile items → {@link FragilePackingStrategy}</li>
+        *   <li>Only non-fragile items → {@link StandardPackingStrategy}</li>
+        *   <li>Mixture of both → {@link MixedPackingStrategy}</li>
      * </ul>
      *
      * @param job the packing job to inspect
@@ -44,8 +45,20 @@ public class PackingStrategyFactory {
         // concrete classes are hidden from the caller.
         // -----------------------------------------------------------
 
-        boolean hasFragile = job.getItems().stream().anyMatch(PackingItem::isFragile);
+        boolean hasFragile = false;
+        boolean hasStandard = false;
 
+        for (PackingItem item : job.getItems()) {
+            if (item.isFragile()) {
+                hasFragile = true;
+            } else {
+                hasStandard = true;
+            }
+        }
+
+        if (hasFragile && hasStandard) {
+            return new MixedPackingStrategy();
+        }
         if (hasFragile) {
             return new FragilePackingStrategy();
         }

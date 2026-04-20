@@ -96,6 +96,9 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
         model.addObserver(this);
         initUI();
         refreshOrderTable();
+        refreshJobTable();
+        refreshPalletTable();
+        updateKpis();
     }
 
     // ---------------------------------------------------------------
@@ -104,7 +107,7 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
 
     private void initUI() {
         setTitle("SCM Packing Subsystem — Dashboard");
-        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(1320, 820);
         setLocationRelativeTo(null);
         setMinimumSize(new Dimension(1024, 650));
@@ -292,10 +295,14 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
         JButton btnPalletize = styledButton("📦 Add to Pallet", ACCENT_PURPLE);
         btnPalletize.addActionListener(e -> palletizeSelected());
 
+        JButton btnUnpack = styledButton("↩ Unpack Selected", ACCENT_ORANGE);
+        btnUnpack.addActionListener(e -> unpackSelectedJobs());
+
         JLabel jobHint = new JLabel("<html><i style='color:#888;font-size:10px;'>Select packed jobs (Ctrl+click) to palletize or view barcodes</i></html>");
 
         actionBar.add(btnBarcode);
         actionBar.add(btnPalletize);
+        actionBar.add(btnUnpack);
         actionBar.add(jobHint);
         panel.add(actionBar, BorderLayout.NORTH);
 
@@ -643,6 +650,34 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
         showBarcodeDialog(label);
     }
 
+    private void unpackSelectedJobs() {
+        List<String> selectedJobIds = getSelectedJobIds();
+        if (selectedJobIds.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Select at least one packed job to unpack.",
+                    "No Job Selected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Unpack selected job(s)? This removes their persisted packaging rows\n"
+                        + "and makes the source orders packable again.",
+                "Confirm Unpack", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (confirm != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        int unpacked = controller.unpackSelectedJobs(selectedJobIds);
+        if (unpacked > 0) {
+            refreshOrderTable();
+            refreshPalletTable();
+            updateKpis();
+            JOptionPane.showMessageDialog(this,
+                    "Unpacked " + unpacked + " job(s).",
+                    "Unpack Complete", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
     private List<String> getSelectedJobIds() {
         List<String> ids = new ArrayList<>();
         int[] rows = jobTable.getSelectedRows();
@@ -717,6 +752,15 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
         }
     }
 
+    private void refreshJobTable() {
+        jobTableModel.setRowCount(0);
+        List<PackingJob> allJobs = new ArrayList<>(model.getAllJobs());
+        allJobs.sort(Comparator.comparing(PackingJob::getJobId));
+        for (PackingJob job : allJobs) {
+            addJobRow(job);
+        }
+    }
+
     private void refreshPalletTable() {
         palletTableModel.setRowCount(0);
         for (PackingUnit pallet : model.getAllUnits()) {
@@ -758,6 +802,9 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
                     break;
 
                 case JOB_REMOVED:
+                    removeJobRow(job);
+                    refreshOrderTable();
+                    refreshPalletTable();
                     updateKpis();
                     break;
             }
@@ -769,12 +816,12 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
     // ---------------------------------------------------------------
 
     private void addJobRow(PackingJob job) {
-        boolean hasFragile = job.getItems().stream().anyMatch(PackingItem::isFragile);
+        String strategyLabel = deriveStrategyLabel(job);
         jobTableModel.addRow(new Object[]{
                 job.getJobId(),
                 job.getOrderId(),
                 job.getItems().size(),
-                hasFragile ? "Fragile" : "Standard",
+            strategyLabel,
                 job.getStatus().getDisplayLabel(),
                 job.getProgress()
         });
@@ -783,8 +830,37 @@ public class PackingMainFrame extends JFrame implements PackingObserver {
     private void refreshJobRow(PackingJob job) {
         for (int i = 0; i < jobTableModel.getRowCount(); i++) {
             if (job.getJobId().equals(jobTableModel.getValueAt(i, 0))) {
+                jobTableModel.setValueAt(deriveStrategyLabel(job), i, 3);
                 jobTableModel.setValueAt(job.getStatus().getDisplayLabel(), i, 4);
                 jobTableModel.setValueAt(job.getProgress(), i, 5);
+                return;
+            }
+        }
+    }
+
+    private String deriveStrategyLabel(PackingJob job) {
+        boolean hasFragile = false;
+        boolean hasStandard = false;
+
+        for (PackingItem item : job.getItems()) {
+            if (item.isFragile()) {
+                hasFragile = true;
+            } else {
+                hasStandard = true;
+            }
+            if (hasFragile && hasStandard) {
+                return "Mixed";
+            }
+        }
+
+        return hasFragile ? "Fragile" : "Standard";
+    }
+
+    private void removeJobRow(PackingJob job) {
+        if (job == null) return;
+        for (int i = 0; i < jobTableModel.getRowCount(); i++) {
+            if (job.getJobId().equals(jobTableModel.getValueAt(i, 0))) {
+                jobTableModel.removeRow(i);
                 return;
             }
         }

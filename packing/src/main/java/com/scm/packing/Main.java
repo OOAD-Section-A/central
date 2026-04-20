@@ -69,8 +69,7 @@ public class Main {
                     + "Command:  java com.scm.packing.licensing.LicenseServer",
                     "SCM Packing — License Error",
                     JOptionPane.ERROR_MESSAGE);
-
-            System.exit(1);
+                return;
         }
 
         System.out.println("[Main] ✓ License OK.\n");

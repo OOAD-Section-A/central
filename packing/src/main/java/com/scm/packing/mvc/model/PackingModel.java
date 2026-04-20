@@ -5,10 +5,18 @@ import com.scm.packing.integration.exceptions.IExceptionDispatcher;
 import com.scm.packing.observer.PackingEventType;
 import com.scm.packing.observer.PackingObserver;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Central model of the MVC triad.  Holds the canonical collections of
@@ -43,6 +51,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class PackingModel {
 
+    private static final String PALLET_FILE_NAME = "packing_pallets.tmp";
+    private static final Pattern PALLET_ID_PATTERN = Pattern.compile("^PLT-(\\d+)$");
+
     // ---------------------------------------------------------------
     // Dependencies (injected — no Singletons)
     // ---------------------------------------------------------------
@@ -75,6 +86,9 @@ public class PackingModel {
      * even if a listener is removed mid-iteration.
      */
     private final List<PackingObserver> observers = new CopyOnWriteArrayList<>();
+
+    /** Lightweight persistence file for pallets across app restarts. */
+    private final Path palletFilePath = Paths.get(PALLET_FILE_NAME);
 
     // ---------------------------------------------------------------
     // Constructor — Dependency Injection (no Singleton)
@@ -147,6 +161,15 @@ public class PackingModel {
         }
     }
 
+    /** Marks an order as unpacked/re-opened for packing. */
+    public void markOrderUnpacked(String orderId) {
+        Order order = orders.get(orderId);
+        if (order != null) {
+            order.setPacked(false);
+            databaseLayer.updateOrder(order);
+        }
+    }
+
     // ---------------------------------------------------------------
     // Job management
     // ---------------------------------------------------------------
@@ -186,6 +209,54 @@ public class PackingModel {
         return jobs.get(jobId);
     }
 
+    /**
+     * Reverts a packed job: removes persisted DB rows, detaches from pallets,
+     * and marks source orders as unpacked so they can be packed again.
+     */
+    public boolean unpackJob(String jobId) {
+        PackingJob job = jobs.get(jobId);
+        if (job == null) {
+            publishStatus("⚠ Job " + jobId + " not found.");
+            return false;
+        }
+
+        if (job.getStatus() != PackingJobStatus.PACKED) {
+            publishStatus("⚠ Job " + jobId + " is not packed.");
+            return false;
+        }
+
+        boolean deleted;
+        try {
+            deleted = databaseLayer.deleteJob(job);
+        } catch (Exception e) {
+            exceptionDispatcher.dispatchUnregistered(
+                    "Failed to unpack job " + jobId + ": " + e.getMessage());
+            return false;
+        }
+
+        if (!deleted) {
+            publishStatus("⚠ Could not remove persisted packaging row(s) for job " + jobId + ".");
+            return false;
+        }
+
+        jobs.remove(jobId);
+        barcodes.remove(jobId);
+
+        for (PackingUnit unit : units) {
+            unit.removeJob(jobId);
+        }
+        units.removeIf(unit -> unit.getCurrentSize() == 0);
+        persistUnits();
+
+        for (String orderId : splitOrderIds(job.getOrderId())) {
+            markOrderUnpacked(orderId);
+        }
+
+        publishStatus("↩ Unpacked job " + jobId + ". Orders can be packed again.");
+        fireEvent(PackingEventType.JOB_REMOVED, job, "Job removed: " + jobId);
+        return true;
+    }
+
     // ---------------------------------------------------------------
     // Barcode management (Labeling & Traceability)
     // ---------------------------------------------------------------
@@ -220,6 +291,7 @@ public class PackingModel {
     /** Adds a pallet to the model. */
     public void addUnit(PackingUnit unit) {
         units.add(unit);
+        persistUnits();
         publishStatus("📦 Created Pallet " + unit.getUnitId()
                 + " with " + unit.getCurrentSize() + " jobs"
                 + String.format(" (%.2f kg)", unit.getTotalWeightKg()));
@@ -257,6 +329,7 @@ public class PackingModel {
                 jobs.put(job.getJobId(), job);
                 fireEvent(PackingEventType.JOB_ADDED, job, "Loaded from DB: " + job.getJobId());
             }
+            loadUnitsFromDisk();
             if (!loaded.isEmpty()) {
                 publishStatus("Loaded " + loaded.size() + " existing jobs.");
             }
@@ -272,4 +345,113 @@ public class PackingModel {
 
     public IExceptionDispatcher getExceptionDispatcher() { return exceptionDispatcher; }
     public IDatabaseLayer getDatabaseLayer()             { return databaseLayer; }
+
+    /** Persists current pallet state to a lightweight local file. */
+    public void persistUnits() {
+        synchronized (palletFilePath) {
+            try (BufferedWriter writer = Files.newBufferedWriter(palletFilePath)) {
+                for (PackingUnit unit : units) {
+                    StringBuilder jobsCsv = new StringBuilder();
+                    for (PackingJob job : unit.getJobs()) {
+                        if (jobsCsv.length() > 0) {
+                            jobsCsv.append(",");
+                        }
+                        jobsCsv.append(job.getJobId());
+                    }
+
+                    writer.write(unit.getUnitId() + "|"
+                            + unit.getMaxCapacity() + "|"
+                            + jobsCsv + System.lineSeparator());
+                }
+            } catch (IOException e) {
+                publishStatus("⚠ Could not persist pallets: " + e.getMessage());
+            }
+        }
+    }
+
+    private void loadUnitsFromDisk() {
+        if (!Files.exists(palletFilePath)) {
+            return;
+        }
+
+        List<PackingUnit> loadedUnits = new ArrayList<>();
+
+        synchronized (palletFilePath) {
+            try (BufferedReader reader = Files.newBufferedReader(palletFilePath)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String[] parts = line.split("\\|", -1);
+                    if (parts.length < 2) {
+                        continue;
+                    }
+
+                    String unitId = parts[0].trim();
+                    int maxCapacity;
+                    try {
+                        maxCapacity = Integer.parseInt(parts[1].trim());
+                    } catch (NumberFormatException nfe) {
+                        maxCapacity = PackingUnit.DEFAULT_CAPACITY;
+                    }
+
+                    PackingUnit unit = new PackingUnit(unitId, maxCapacity);
+                    if (parts.length >= 3 && !parts[2].isBlank()) {
+                        for (String token : parts[2].split(",")) {
+                            String jobId = token.trim();
+                            if (jobId.isEmpty()) {
+                                continue;
+                            }
+                            PackingJob job = jobs.get(jobId);
+                            if (job != null && job.getStatus() == PackingJobStatus.PACKED) {
+                                unit.addJob(job);
+                            }
+                        }
+                    }
+
+                    loadedUnits.add(unit);
+                }
+            } catch (IOException e) {
+                publishStatus("⚠ Could not load persisted pallets: " + e.getMessage());
+                return;
+            }
+        }
+
+        units.clear();
+        units.addAll(loadedUnits);
+        syncUnitCounterFromUnits();
+        if (!loadedUnits.isEmpty()) {
+            publishStatus("Loaded " + loadedUnits.size() + " pallet(s) from local storage.");
+        }
+    }
+
+    private void syncUnitCounterFromUnits() {
+        int maxSeen = 0;
+        for (PackingUnit unit : units) {
+            Matcher matcher = PALLET_ID_PATTERN.matcher(unit.getUnitId());
+            if (!matcher.matches()) {
+                continue;
+            }
+
+            int sequence = Integer.parseInt(matcher.group(1));
+            if (sequence > maxSeen) {
+                maxSeen = sequence;
+            }
+        }
+
+        unitIdCounter.set(Math.max(1, maxSeen + 1));
+    }
+
+    private static List<String> splitOrderIds(String rawOrderIds) {
+        if (rawOrderIds == null || rawOrderIds.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        List<String> parsed = new ArrayList<>();
+        for (String token : rawOrderIds.split(",")) {
+            String trimmed = token.trim();
+            if (!trimmed.isEmpty()) {
+                parsed.add(trimmed);
+            }
+        }
+        return parsed;
+    }
 }

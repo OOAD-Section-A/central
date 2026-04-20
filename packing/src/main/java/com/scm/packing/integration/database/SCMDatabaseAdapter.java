@@ -9,7 +9,12 @@ import com.scm.packing.mvc.model.PackingItem;
 import com.scm.packing.mvc.model.PackingJobStatus;
 
 import java.math.BigDecimal;
+import java.io.InputStream;
 import java.time.LocalDateTime;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -17,6 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -103,6 +109,50 @@ public class SCMDatabaseAdapter implements IDatabaseLayer {
     @Override
     public void updateJob(PackingJob job) {
         persistJobIfTerminal(job);
+    }
+
+    @Override
+    public boolean deleteJob(PackingJob job) {
+        List<String> orderIds = splitOrderIds(job.getOrderId());
+        List<String> packageIds = new ArrayList<>();
+
+        for (int i = 0; i < orderIds.size(); i++) {
+            packageIds.add(buildPackageId(job.getJobId(), i));
+        }
+
+        if (packageIds.isEmpty()) {
+            packageIds.add(job.getJobId());
+        }
+
+        int deletedRows = 0;
+
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+
+            try {
+                deletedRows += deletePackagingRowsByPackageId(connection, packageIds);
+
+                // Fallback for legacy rows that might not use the expected package-id pattern.
+                if (deletedRows == 0) {
+                    deletedRows += deletePackagingRowsByOrderId(connection, orderIds);
+                }
+
+                connection.commit();
+            } catch (SQLException deleteError) {
+                connection.rollback();
+                throw deleteError;
+            }
+        } catch (Exception e) {
+            System.err.println("[SCMDatabaseAdapter] Failed to delete job " + job.getJobId()
+                    + ": " + e.getMessage());
+            return false;
+        }
+
+        for (String packageId : packageIds) {
+            persistedPackageIds.remove(packageId);
+        }
+
+        return deletedRows > 0;
     }
 
     @Override
@@ -249,6 +299,65 @@ public class SCMDatabaseAdapter implements IDatabaseLayer {
         return index == 0 ? jobId : jobId + "-" + (index + 1);
     }
 
+    private Connection openConnection() throws Exception {
+        Properties properties = new Properties();
+
+        try (InputStream input = SCMDatabaseAdapter.class.getClassLoader()
+                .getResourceAsStream("database.properties")) {
+            if (input == null) {
+                throw new IllegalStateException("database.properties not found on classpath");
+            }
+            properties.load(input);
+        }
+
+        String url = safeText(properties.getProperty("db.url"), "");
+        String user = safeText(properties.getProperty("db.username"), "");
+        if (user.isBlank()) {
+            user = safeText(properties.getProperty("db.user"), "");
+        }
+        String password = properties.getProperty("db.password", "");
+
+        if (url.isBlank() || user.isBlank()) {
+            throw new IllegalStateException("Missing db.url or db.username/db.user in database.properties");
+        }
+
+        return DriverManager.getConnection(url, user, password);
+    }
+
+    private static int deletePackagingRowsByPackageId(Connection connection, List<String> packageIds)
+            throws SQLException {
+        if (packageIds.isEmpty()) {
+            return 0;
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(packageIds.size(), "?"));
+        String sql = "DELETE FROM packaging_jobs WHERE package_id IN (" + placeholders + ")";
+
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < packageIds.size(); i++) {
+                statement.setString(i + 1, packageIds.get(i));
+            }
+            return statement.executeUpdate();
+        }
+    }
+
+    private static int deletePackagingRowsByOrderId(Connection connection, List<String> orderIds)
+            throws SQLException {
+        if (orderIds.isEmpty()) {
+            return 0;
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+        String sql = "DELETE FROM packaging_jobs WHERE order_id IN (" + placeholders + ")";
+
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < orderIds.size(); i++) {
+                statement.setString(i + 1, orderIds.get(i));
+            }
+            return statement.executeUpdate();
+        }
+    }
+
     private static PackingJobStatus mapStatus(String dbStatus) {
         if (dbStatus == null) {
             return PackingJobStatus.PENDING;
@@ -282,10 +391,11 @@ public class SCMDatabaseAdapter implements IDatabaseLayer {
 
     private static boolean looksFragile(String description) {
         String text = description == null ? "" : description.toLowerCase(Locale.ROOT);
-        return text.contains("glass")
+        return text.contains("fragile")
+            || text.contains("glass")
+            || text.contains("crystal")
+            || text.contains("porcelain")
                 || text.contains("ceramic")
-                || text.contains("monitor")
-                || text.contains("screen")
-                || text.contains("fragile");
+            || text.contains("glassware");
     }
 }

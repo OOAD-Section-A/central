@@ -65,6 +65,14 @@ public interface IDatabaseLayer {
     void updateJob(PackingJob job);
 
     /**
+     * Deletes a persisted packing job record so the order can be packed again.
+     *
+     * @param job the job to delete/unpack
+     * @return {@code true} if one or more persisted records were removed
+     */
+    boolean deleteJob(PackingJob job);
+
+    /**
      * Returns all jobs currently known to the persistence layer.
      *
      * @return list of packing jobs

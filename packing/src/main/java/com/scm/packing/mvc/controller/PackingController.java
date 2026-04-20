@@ -7,6 +7,8 @@ import com.scm.packing.worker.PackingWorker;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +32,8 @@ import java.util.stream.Collectors;
  * {@link AtomicInteger} to avoid race conditions.</p>
  */
 public class PackingController {
+
+    private static final Pattern PACKING_JOB_ID_PATTERN = Pattern.compile("^PKJ-(\\d{4})(?:-\\d+)?$");
 
     private final PackingModel model;
     private final PackingStrategyFactory strategyFactory;
@@ -132,6 +136,34 @@ public class PackingController {
         return submitted;
     }
 
+    /**
+     * Unpacks selected packed jobs so their source orders can be packed again.
+     *
+     * @param jobIds job IDs selected in the UI
+     * @return number of jobs successfully unpacked
+     */
+    public int unpackSelectedJobs(List<String> jobIds) {
+        int unpacked = 0;
+
+        for (String jobId : jobIds) {
+            PackingJob job = model.getJob(jobId);
+            if (job == null) {
+                model.publishStatus("⚠ Job " + jobId + " not found — skipping.");
+                continue;
+            }
+            if (job.getStatus() != PackingJobStatus.PACKED) {
+                model.publishStatus("⚠ Job " + jobId + " is not packed — skipping.");
+                continue;
+            }
+
+            if (model.unpackJob(jobId)) {
+                unpacked++;
+            }
+        }
+
+        return unpacked;
+    }
+
     // ---------------------------------------------------------------
     // Pallet creation (Unitization)
     // ---------------------------------------------------------------
@@ -215,6 +247,7 @@ public class PackingController {
         }
 
         if (added > 0) {
+            model.persistUnits();
             model.publishStatus("📦 Added " + added + " job(s) to Pallet " + palletId
                     + " — now " + pallet.getCurrentSize() + "/" + pallet.getMaxCapacity());
         }
@@ -236,6 +269,7 @@ public class PackingController {
         }
         boolean removed = pallet.removeJob(jobId);
         if (removed) {
+            model.persistUnits();
             model.publishStatus("📦 Removed job " + jobId + " from Pallet " + palletId
                     + " — now " + pallet.getCurrentSize() + "/" + pallet.getMaxCapacity());
         } else {
@@ -250,5 +284,31 @@ public class PackingController {
     public void loadInitialData() {
         model.loadOrders();
         model.loadFromDatabase();
+        syncJobCounterFromLoadedJobs();
+    }
+
+    private void syncJobCounterFromLoadedJobs() {
+        int maxSeen = 0;
+
+        for (PackingJob job : model.getAllJobs()) {
+            Matcher matcher = PACKING_JOB_ID_PATTERN.matcher(job.getJobId());
+            if (!matcher.matches()) {
+                continue;
+            }
+
+            int sequence = Integer.parseInt(matcher.group(1));
+            if (sequence > maxSeen) {
+                maxSeen = sequence;
+            }
+        }
+
+        int next = Math.max(1, maxSeen + 1);
+        jobIdCounter.set(next);
+
+        if (maxSeen > 0) {
+            model.publishStatus("Continuing job IDs from PKJ-"
+                    + String.format("%04d", maxSeen) + "; next is PKJ-"
+                    + String.format("%04d", next) + ".");
+        }
     }
 }

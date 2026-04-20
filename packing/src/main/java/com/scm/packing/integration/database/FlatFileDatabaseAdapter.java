@@ -180,6 +180,13 @@ public class FlatFileDatabaseAdapter implements IDatabaseLayer {
     }
 
     @Override
+    public boolean deleteJob(PackingJob job) {
+        PackingJob removed = jobMap.remove(job.getJobId());
+        flushToDisk();
+        return removed != null;
+    }
+
+    @Override
     public List<PackingJob> loadAllJobs() {
         return new ArrayList<>(jobMap.values());
     }
